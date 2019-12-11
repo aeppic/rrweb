@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import { expect } from 'chai';
+import { Suite } from 'mocha';
 import {
   EventType,
   eventWithTime,
@@ -113,7 +114,13 @@ interface IWindow extends Window {
   };
 }
 
-describe('replayer', () => {
+interface ISuite extends Suite {
+  code: string;
+  browser: puppeteer.Browser;
+  page: puppeteer.Page;
+}
+
+describe('replayer', function(this: ISuite) {
   before(async () => {
     this.browser = await puppeteer.launch({
       headless: false,
@@ -144,7 +151,7 @@ describe('replayer', () => {
 
   it('can get meta data', async () => {
     const meta = await this.page.evaluate(() => {
-      const { Replayer } = (window as IWindow).rrweb;
+      const { Replayer } = ((window as unknown) as IWindow).rrweb;
       const replayer = new Replayer(events);
       return replayer.getMetaData();
     });
@@ -155,7 +162,7 @@ describe('replayer', () => {
 
   it('will start actions when play', async () => {
     const actionLength = await this.page.evaluate(() => {
-      const { Replayer } = (window as IWindow).rrweb;
+      const { Replayer } = ((window as unknown) as IWindow).rrweb;
       const replayer = new Replayer(events);
       replayer.play();
       return replayer['timer']['actions'].length;
@@ -165,7 +172,7 @@ describe('replayer', () => {
 
   it('will clean actions when pause', async () => {
     const actionLength = await this.page.evaluate(() => {
-      const { Replayer } = (window as IWindow).rrweb;
+      const { Replayer } = ((window as unknown) as IWindow).rrweb;
       const replayer = new Replayer(events);
       replayer.play();
       replayer.pause();
@@ -176,7 +183,7 @@ describe('replayer', () => {
 
   it('can play at any time offset', async () => {
     const actionLength = await this.page.evaluate(() => {
-      const { Replayer } = (window as IWindow).rrweb;
+      const { Replayer } = ((window as unknown) as IWindow).rrweb;
       const replayer = new Replayer(events);
       replayer.play(1500);
       return replayer['timer']['actions'].length;
@@ -188,7 +195,7 @@ describe('replayer', () => {
 
   it('can resume at any time offset', async () => {
     const actionLength = await this.page.evaluate(() => {
-      const { Replayer } = (window as IWindow).rrweb;
+      const { Replayer } = ((window as unknown) as IWindow).rrweb;
       const replayer = new Replayer(events);
       replayer.play(1500);
       replayer.pause();

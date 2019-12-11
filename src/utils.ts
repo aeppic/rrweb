@@ -3,6 +3,7 @@ import {
   throttleOptions,
   listenerHandler,
   hookResetter,
+  blockClass,
 } from './types';
 import { INode } from 'rrweb-snapshot';
 
@@ -52,7 +53,7 @@ export function throttle<T>(
   let timeout: number | null = null;
   let previous = 0;
   // tslint:disable-next-line: only-arrow-functions
-  return function() {
+  return function(arg: T) {
     let now = Date.now();
     if (!previous && options.leading === false) {
       previous = now;
@@ -81,20 +82,27 @@ export function hookSetter<T>(
   target: T,
   key: string | number | symbol,
   d: PropertyDescriptor,
+  isRevoked?: boolean,
 ): hookResetter {
   const original = Object.getOwnPropertyDescriptor(target, key);
-  Object.defineProperty(target, key, {
-    set(value) {
-      // put hooked setter into event loop to avoid of set latency
-      setTimeout(() => {
-        d.set!.call(this, value);
-      }, 0);
-      if (original && original.set) {
-        original.set.call(this, value);
-      }
-    },
-  });
-  return () => hookSetter(target, key, original || {});
+  Object.defineProperty(
+    target,
+    key,
+    isRevoked
+      ? d
+      : {
+          set(value) {
+            // put hooked setter into event loop to avoid of set latency
+            setTimeout(() => {
+              d.set!.call(this, value);
+            }, 0);
+            if (original && original.set) {
+              original.set.call(this, value);
+            }
+          },
+        },
+  );
+  return () => hookSetter(target, key, original || {}, true);
 }
 
 export function getWindowHeight(): number {
@@ -113,18 +121,24 @@ export function getWindowWidth(): number {
   );
 }
 
-const BLOCK_CLASS = 'rr-block';
-export function isBlocked(node: Node | null): boolean {
+export function isBlocked(node: Node | null, blockClass: blockClass): boolean {
   if (!node) {
     return false;
   }
   if (node.nodeType === node.ELEMENT_NODE) {
-    return (
-      (node as HTMLElement).classList.contains(BLOCK_CLASS) ||
-      isBlocked(node.parentNode)
-    );
+    let needBlock = false;
+    if (typeof blockClass === 'string') {
+      needBlock = (node as HTMLElement).classList.contains(blockClass);
+    } else {
+      (node as HTMLElement).classList.forEach(className => {
+        if (blockClass.test(className)) {
+          needBlock = true;
+        }
+      });
+    }
+    return needBlock || isBlocked(node.parentNode, blockClass);
   }
-  return isBlocked(node.parentNode);
+  return isBlocked(node.parentNode, blockClass);
 }
 
 export function isAncestorRemoved(target: INode): boolean {
@@ -143,4 +157,17 @@ export function isAncestorRemoved(target: INode): boolean {
     return true;
   }
   return isAncestorRemoved((target.parentNode as unknown) as INode);
+}
+
+export function isTouchEvent(
+  event: MouseEvent | TouchEvent,
+): event is TouchEvent {
+  return Boolean((event as TouchEvent).changedTouches);
+}
+
+export function polyfill() {
+  if ('NodeList' in window && !NodeList.prototype.forEach) {
+    NodeList.prototype.forEach = (Array.prototype
+      .forEach as unknown) as NodeList['forEach'];
+  }
 }

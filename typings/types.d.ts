@@ -4,7 +4,8 @@ export declare enum EventType {
     Load = 1,
     FullSnapshot = 2,
     IncrementalSnapshot = 3,
-    Meta = 4
+    Meta = 4,
+    Custom = 5
 }
 export declare type domContentLoadedEvent = {
     type: EventType.DomContentLoaded;
@@ -36,19 +37,27 @@ export declare type metaEvent = {
         height: number;
     };
 };
+export declare type customEvent<T = unknown> = {
+    type: EventType.Custom;
+    data: {
+        tag: string;
+        payload: T;
+    };
+};
 export declare enum IncrementalSource {
     Mutation = 0,
     MouseMove = 1,
     MouseInteraction = 2,
     Scroll = 3,
     ViewportResize = 4,
-    Input = 5
+    Input = 5,
+    TouchMove = 6
 }
 export declare type mutationData = {
     source: IncrementalSource.Mutation;
 } & mutationCallbackParam;
 export declare type mousemoveData = {
-    source: IncrementalSource.MouseMove;
+    source: IncrementalSource.MouseMove | IncrementalSource.TouchMove;
     positions: mousePosition[];
 };
 export declare type mouseInteractionData = {
@@ -65,15 +74,22 @@ export declare type inputData = {
     id: number;
 } & inputValue;
 export declare type incrementalData = mutationData | mousemoveData | mouseInteractionData | scrollData | viewportResizeData | inputData;
-export declare type event = domContentLoadedEvent | loadedEvent | fullSnapshotEvent | incrementalSnapshotEvent | metaEvent;
+export declare type event = domContentLoadedEvent | loadedEvent | fullSnapshotEvent | incrementalSnapshotEvent | metaEvent | customEvent;
 export declare type eventWithTime = event & {
     timestamp: number;
     delay?: number;
 };
+export declare type blockClass = string | RegExp;
 export declare type recordOptions = {
     emit?: (e: eventWithTime, isCheckout?: boolean) => void;
     checkoutEveryNth?: number;
     checkoutEveryNms?: number;
+    blockClass?: blockClass;
+    ignoreClass?: string;
+    maskAllInputs?: boolean;
+    inlineStylesheet?: boolean;
+    hooks?: hooksParam;
+    mousemoveWait?: number;
 };
 export declare type observerParam = {
     mutationCb: mutationCallBack;
@@ -82,6 +98,19 @@ export declare type observerParam = {
     scrollCb: scrollCallback;
     viewportResizeCb: viewportResizeCallback;
     inputCb: inputCallback;
+    blockClass: blockClass;
+    ignoreClass: string;
+    maskAllInputs: boolean;
+    inlineStylesheet: boolean;
+    mousemoveWait: number;
+};
+export declare type hooksParam = {
+    mutation?: mutationCallBack;
+    mousemove?: mousemoveCallBack;
+    mouseInteraction?: mouseInteractionCallBack;
+    scroll?: scrollCallback;
+    viewportResize?: viewportResizeCallback;
+    input?: inputCallback;
 };
 export declare type textCursor = {
     node: Node;
@@ -120,7 +149,7 @@ declare type mutationCallbackParam = {
     adds: addedNodeMutation[];
 };
 export declare type mutationCallBack = (m: mutationCallbackParam) => void;
-export declare type mousemoveCallBack = (p: mousePosition[]) => void;
+export declare type mousemoveCallBack = (p: mousePosition[], source: IncrementalSource.MouseMove | IncrementalSource.TouchMove) => void;
 export declare type mousePosition = {
     x: number;
     y: number;
@@ -136,7 +165,7 @@ export declare enum MouseInteractions {
     Focus = 5,
     Blur = 6,
     TouchStart = 7,
-    TouchMove = 8,
+    TouchMove_Departed = 8,
     TouchEnd = 9
 }
 declare type mouseInteractionParam = {
@@ -181,9 +210,12 @@ export declare type playerConfig = {
     speed: number;
     root: Element;
     loadTimeout: number;
-    skipInactive: Boolean;
-    showWarning: Boolean;
-    showDebug: Boolean;
+    skipInactive: boolean;
+    showWarning: boolean;
+    showDebug: boolean;
+    blockClass: string;
+    liveMode: boolean;
+    insertStyleRules: string[];
 };
 export declare type playerMetaData = {
     totalTime: number;
@@ -199,6 +231,12 @@ export declare type actionWithDelay = {
     doAction: () => void;
     delay: number;
 };
+export declare type Handler = (event?: unknown) => void;
+export declare type Emitter = {
+    on(type: string, handler: Handler): void;
+    emit(type: string, event?: unknown): void;
+};
+export declare type Arguments<T> = T extends (...payload: infer U) => unknown ? U : unknown;
 export declare enum ReplayerEvents {
     Start = "start",
     Pause = "pause",
@@ -209,6 +247,7 @@ export declare enum ReplayerEvents {
     LoadStylesheetStart = "load-stylesheet-start",
     LoadStylesheetEnd = "load-stylesheet-end",
     SkipStart = "skip-start",
-    SkipEnd = "skip-end"
+    SkipEnd = "skip-end",
+    MouseInteraction = "mouse-interaction"
 }
 export {};

@@ -2,9 +2,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import { assertSnapshot } from './utils';
+import { Suite } from 'mocha';
+import { recordOptions } from '../src/types';
 
-describe('record integration tests', () => {
-  function getHtml(fileName: string): string {
+interface ISuite extends Suite {
+  code: string;
+  browser: puppeteer.Browser;
+}
+
+describe('record integration tests', function(this: ISuite) {
+  const getHtml = (fileName: string, options: recordOptions = {}): string => {
     const filePath = path.resolve(__dirname, `./html/${fileName}`);
     const html = fs.readFileSync(filePath, 'utf8');
     return html.replace(
@@ -18,13 +25,14 @@ describe('record integration tests', () => {
         emit: event => {
           console.log(event);
           window.snapshots.push(event);
-        }
+        },
+        maskAllInputs: ${options.maskAllInputs}
       });
     </script>
     </body>
     `,
     );
-  }
+  };
 
   before(async () => {
     this.browser = await puppeteer.launch({
@@ -142,6 +150,23 @@ describe('record integration tests', () => {
     assertSnapshot(snapshots, __filename, 'ignore');
   });
 
+  it('should not record input values if maskAllInputs is enabled', async () => {
+    const page: puppeteer.Page = await this.browser.newPage();
+    await page.goto('about:blank');
+    await page.setContent(
+      getHtml.call(this, 'form.html', { maskAllInputs: true }),
+    );
+
+    await page.type('input[type="text"]', 'test');
+    await page.click('input[type="radio"]');
+    await page.click('input[type="checkbox"]');
+    await page.type('textarea', 'textarea test');
+    await page.select('select', '1');
+
+    const snapshots = await page.evaluate('window.snapshots');
+    assertSnapshot(snapshots, __filename, 'mask');
+  });
+
   it('should not record blocked elements and its child nodes', async () => {
     const page: puppeteer.Page = await this.browser.newPage();
     await page.goto('about:blank');
@@ -155,7 +180,7 @@ describe('record integration tests', () => {
     assertSnapshot(snapshots, __filename, 'block');
   });
 
-  it('should record DOM node movement', async () => {
+  it('should record DOM node movement 1', async () => {
     const page: puppeteer.Page = await this.browser.newPage();
     await page.goto('about:blank');
     await page.setContent(getHtml.call(this, 'move-node.html'));
@@ -170,6 +195,21 @@ describe('record integration tests', () => {
       div.appendChild(span);
     });
     const snapshots = await page.evaluate('window.snapshots');
-    assertSnapshot(snapshots, __filename, 'move-node');
+    assertSnapshot(snapshots, __filename, 'move-node-1');
+  });
+
+  it('should record DOM node movement 2', async () => {
+    const page: puppeteer.Page = await this.browser.newPage();
+    await page.goto('about:blank');
+    await page.setContent(getHtml.call(this, 'move-node.html'));
+
+    await page.evaluate(() => {
+      const div = document.createElement('div');
+      const span = document.querySelector('span')!;
+      document.body.appendChild(div);
+      div.appendChild(span);
+    });
+    const snapshots = await page.evaluate('window.snapshots');
+    assertSnapshot(snapshots, __filename, 'move-node-2');
   });
 });

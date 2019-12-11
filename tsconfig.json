@@ -8,9 +8,10 @@
     "sourceMap": true,
     "rootDir": "src",
     "outDir": "build",
-    "lib": ["es6", "dom"]
+    "lib": ["es6", "dom"],
+    "downlevelIteration": true
   },
   "compileOnSave": true,
   "exclude": ["test"],
-  "include": ["src", "index.d.ts", "test.d.ts"]
+  "include": ["src", "test.d.ts"]
 }

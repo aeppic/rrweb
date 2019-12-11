@@ -18,15 +18,15 @@ import {
   incrementalSnapshotEvent,
   incrementalData,
   ReplayerEvents,
+  Handler,
+  Emitter,
 } from '../types';
-import { mirror } from '../utils';
-import injectStyleRules from './styles/inject-style';
+import { mirror, polyfill } from '../utils';
+import getInjectStyleRules from './styles/inject-style';
 import './styles/style.css';
 
 const SKIP_TIME_THRESHOLD = 10 * 1000;
 const SKIP_TIME_INTERVAL = 5 * 1000;
-
-smoothscroll.polyfill();
 
 // https://github.com/rollup/rollup/issues/1267#issuecomment-296395734
 // tslint:disable-next-line
@@ -45,7 +45,7 @@ export class Replayer {
 
   private mouse: HTMLDivElement;
 
-  private emitter: mitt.Emitter = mitt();
+  private emitter: Emitter = mitt();
 
   private baselineTime: number = 0;
   // record last played event timestamp when paused
@@ -70,15 +70,20 @@ export class Replayer {
       skipInactive: false,
       showWarning: true,
       showDebug: false,
+      blockClass: 'rr-block',
+      liveMode: false,
+      insertStyleRules: [],
     };
     this.config = Object.assign({}, defaultConfig, config);
 
     this.timer = new Timer(this.config);
+    smoothscroll.polyfill();
+    polyfill();
     this.setupDom();
-    this.emitter.on('resize', this.handleResize as mitt.Handler);
+    this.emitter.on('resize', this.handleResize as Handler);
   }
 
-  public on(event: string, handler: mitt.Handler) {
+  public on(event: string, handler: Handler) {
     this.emitter.on(event, handler);
   }
 
@@ -97,6 +102,10 @@ export class Replayer {
     return {
       totalTime: lastEvent.timestamp - firstEvent.timestamp,
     };
+  }
+
+  public getCurrentTime(): number {
+    return this.timer.timeOffset + this.getTimeOffset();
   }
 
   public getTimeOffset(): number {
@@ -122,7 +131,13 @@ export class Replayer {
       if (isSync) {
         castFn();
       } else {
-        actions.push({ doAction: castFn, delay: this.getDelay(event) });
+        actions.push({
+          doAction: () => {
+            castFn();
+            this.emitter.emit(ReplayerEvents.EventCast, event);
+          },
+          delay: this.getDelay(event),
+        });
       }
     }
     this.timer.addActions(actions);
@@ -157,6 +172,11 @@ export class Replayer {
     this.emitter.emit(ReplayerEvents.Resume);
   }
 
+  public addEvent(event: eventWithTime) {
+    const castFn = this.getCastFn(event, true);
+    castFn();
+  }
+
   private setupDom() {
     this.wrapper = document.createElement('div');
     this.wrapper.classList.add('replayer-wrapper');
@@ -169,6 +189,7 @@ export class Replayer {
     this.iframe = document.createElement('iframe');
     this.iframe.setAttribute('sandbox', 'allow-same-origin');
     this.iframe.setAttribute('scrolling', 'no');
+    this.iframe.setAttribute('style', 'pointer-events: none');
     this.wrapper.appendChild(this.iframe);
   }
 
@@ -278,8 +299,11 @@ export class Replayer {
     const styleEl = document.createElement('style');
     const { documentElement, head } = this.iframe.contentDocument!;
     documentElement!.insertBefore(styleEl, head);
-    for (let idx = 0; idx < injectStyleRules.length; idx++) {
-      (styleEl.sheet! as CSSStyleSheet).insertRule(injectStyleRules[idx], idx);
+    const injectStylesRules = getInjectStyleRules(
+      this.config.blockClass,
+    ).concat(this.config.insertStyleRules);
+    for (let idx = 0; idx < injectStylesRules.length; idx++) {
+      (styleEl.sheet! as CSSStyleSheet).insertRule(injectStylesRules[idx], idx);
     }
     this.emitter.emit(ReplayerEvents.FullsnapshotRebuilded);
     this.waitForStylesheetLoad();
@@ -301,7 +325,7 @@ export class Replayer {
               this.pause();
               this.emitter.emit(ReplayerEvents.LoadStylesheetStart);
               timer = window.setTimeout(() => {
-                this.resume();
+                this.resume(this.getCurrentTime());
                 // mark timer was called
                 timer = -1;
               }, this.config.loadTimeout);
@@ -310,7 +334,7 @@ export class Replayer {
             css.addEventListener('load', () => {
               unloadSheets.delete(css);
               if (unloadSheets.size === 0 && timer !== -1) {
-                this.resume();
+                this.resume(this.getCurrentTime());
                 this.emitter.emit(ReplayerEvents.LoadStylesheetEnd);
                 if (timer) {
                   window.clearTimeout(timer);
@@ -346,17 +370,19 @@ export class Replayer {
         });
 
         const missingNodeMap: missingNodeMap = { ...this.missingNodeRetryMap };
-        d.adds.forEach(mutation => {
+        const queue: addedNodeMutation[] = [];
+
+        const appendNode = (mutation: addedNodeMutation) => {
+          const parent = mirror.getNode(mutation.parentId);
+          if (!parent) {
+            return queue.push(mutation);
+          }
           const target = buildNodeWithSN(
             mutation.node,
             this.iframe.contentDocument!,
             mirror.map,
             true,
           ) as Node;
-          const parent = mirror.getNode(mutation.parentId);
-          if (!parent) {
-            return this.warnNodeNotFound(d, mutation.parentId);
-          }
           let previous: Node | null = null;
           let next: Node | null = null;
           if (mutation.previousId) {
@@ -389,7 +415,20 @@ export class Replayer {
           if (mutation.previousId || mutation.nextId) {
             this.resolveMissingNode(missingNodeMap, parent, target, mutation);
           }
+        };
+
+        d.adds.forEach(mutation => {
+          appendNode(mutation);
         });
+
+        while (queue.length) {
+          if (queue.every(m => !Boolean(mirror.getNode(m.parentId)))) {
+            return queue.forEach(m => this.warnNodeNotFound(d, m.node.id));
+          }
+          const mutation = queue.shift()!;
+          appendNode(mutation);
+        }
+
         if (Object.keys(missingNodeMap).length) {
           Object.assign(this.missingNodeRetryMap, missingNodeMap);
         }
@@ -423,8 +462,10 @@ export class Replayer {
         break;
       }
       case IncrementalSource.MouseMove:
-        // skip mouse move in sync mode
-        if (!isSync) {
+        if (isSync) {
+          const lastPosition = d.positions[d.positions.length - 1];
+          this.moveAndHover(d, lastPosition.x, lastPosition.y, lastPosition.id);
+        } else {
           d.positions.forEach(p => {
             const action = {
               doAction: () => {
@@ -448,6 +489,10 @@ export class Replayer {
         if (!target) {
           return this.debugNodeNotFound(d, d.id);
         }
+        this.emitter.emit(ReplayerEvents.MouseInteraction, {
+          type: d.type,
+          target,
+        });
         switch (d.type) {
           case MouseInteractions.Blur:
             if (((target as Node) as HTMLElement).blur) {
@@ -462,6 +507,8 @@ export class Replayer {
             }
             break;
           case MouseInteractions.Click:
+          case MouseInteractions.TouchStart:
+          case MouseInteractions.TouchEnd:
             /**
              * Click has no visual impact when replaying and may
              * trigger navigation when apply to an <a> link.
